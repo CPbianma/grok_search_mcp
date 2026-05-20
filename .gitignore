@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Environment files (may contain API keys)
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build / coverage artifacts
+dist/
+build/
+coverage/
+.nyc_output/

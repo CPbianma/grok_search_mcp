@@ -1,0 +1,14 @@
+{
+  "name": "grok-search-mcp",
+  "version": "1.0.0",
+  "description": "MCP server exposing Grok search and fact-check tools.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node test-client.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  }
+}
