@@ -3,8 +3,8 @@
 [简体中文](./README.zh.md) | English
 
 An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that
-exposes Grok's live-web search and fact-checking as two tools: `grok_search`
-and `grok_fact_check`.
+exposes Grok's live-web search and fact-checking as three tools: `grok_search`,
+`grok_deep_search`, and `grok_fact_check`.
 
 It is a thin wrapper around an OpenAI-compatible Grok gateway. The recommended
 backend is [chenyme/grok2api](https://github.com/chenyme/grok2api), which turns
@@ -54,14 +54,27 @@ cp .env.example .env
 | :-- | :-- | :-- | :-- |
 | `GROK_API_KEY` | yes | — | `app.api_key` from your grok2api deployment |
 | `GROK_BASE_URL` | no | `http://localhost:8000/v1` | OpenAI-compatible base URL of grok2api |
-| `GROK_MODEL` | no | `grok-4.20-fast` | Any model id supported by your grok2api |
-| `GROK_TIMEOUT_MS` | no | `90000` | Per-request timeout |
+| `GROK_TIMEOUT_MS` | no | `120000` | Per-request **idle** timeout for fast tools (`grok_search`, `grok_fact_check`). Resets on every received SSE chunk. |
+| `GROK_DEEP_TIMEOUT_MS` | no | `300000` | Per-request **idle** timeout for `grok_deep_search` |
+| `GROK_STREAM` | no | `true` | Send `stream: true` to grok2api and parse the SSE chunks. Set to `false` to use a regular non-streaming POST as a debugging fallback. |
 | `HTTPS_PROXY` / `HTTP_PROXY` | no | — | Optional outbound proxy |
+
+> **Models are pinned in the server and not configurable via env.** A previous
+> `GROK_MODEL` variable existed and is now intentionally ignored — set it and
+> nothing happens. This keeps clients from accidentally pinning a stale model
+> id like `grok-4.20-fast`.
+>
+> Tool → model routing:
+>
+> - `grok_search` → `grok-4.3`
+> - `grok_deep_search` → `grok-4.20-multi-agent`
+> - `grok_fact_check` → `grok-4.3`
 
 ## Run as an MCP server
 
 This server speaks MCP over stdio. Register it in your MCP client's config.
-Example for Claude Code (`~/.claude.json` or project `.mcp.json`):
+Example for Claude Code (`~/.claude.json` or project `.mcp.json`); see also
+[`mcp-config.example.json`](./mcp-config.example.json):
 
 ```json
 {
@@ -72,7 +85,9 @@ Example for Claude Code (`~/.claude.json` or project `.mcp.json`):
       "env": {
         "GROK_API_KEY": "your-grok2api-app-key",
         "GROK_BASE_URL": "http://localhost:8000/v1",
-        "GROK_MODEL": "grok-4.20-fast"
+        "GROK_TIMEOUT_MS": "120000",
+        "GROK_DEEP_TIMEOUT_MS": "300000",
+        "GROK_STREAM": "true"
       }
     }
   }
@@ -81,21 +96,37 @@ Example for Claude Code (`~/.claude.json` or project `.mcp.json`):
 
 ## Tools
 
-### `grok_search`
-Search the web with Grok and return an answer with source links.
+### `grok_search` — fast everyday search
+Fast web search with Grok (`grok-4.3`). Returns a concise answer with source
+links. Use this for most everyday lookups.
 
 | Field | Type | Description |
 | :-- | :-- | :-- |
 | `query` | string | Search query |
 | `max_results` | int (1-25, optional) | Preferred number of source links |
 
-### `grok_fact_check`
-Fact-check a claim and return verdict, evidence, caveats, and sources.
+### `grok_deep_search` — broad multi-source research
+Deep, multi-agent web research with Grok (`grok-4.20-multi-agent`). Use this
+for complex investigations, broad surveys, and cross-source verification.
+**Slower than `grok_search`** — prioritizes breadth and accuracy over speed.
+Prefer this when a single quick search wouldn't give a defensible answer.
+
+| Field | Type | Description |
+| :-- | :-- | :-- |
+| `query` | string | Complex research query |
+| `max_results` | int (1-25, optional) | Preferred number of source links |
+
+### `grok_fact_check` — verdict + evidence
+Fact-check a claim with Grok (`grok-4.3`) and return verdict, evidence,
+caveats, and sources.
 
 | Field | Type | Description |
 | :-- | :-- | :-- |
 | `claim` | string | Claim to verify |
 | `max_results` | int (1-25, optional) | Preferred number of source links |
+
+Every tool's response ends with a footer line like `model: grok-4.3` so you
+can see which model actually answered.
 
 ## Test
 
@@ -106,7 +137,8 @@ npm test
 ```
 
 The test client spawns the server as a subprocess, lists tools, and invokes
-both `grok_search` and `grok_fact_check` end-to-end.
+`grok_search`, `grok_deep_search`, and `grok_fact_check` end-to-end, asserting
+that each response footer reports the correct pinned model.
 
 ## Credits
 

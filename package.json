@@ -1,7 +1,7 @@
 {
   "name": "grok-search-mcp",
-  "version": "1.0.0",
-  "description": "MCP server exposing Grok search and fact-check tools.",
+  "version": "1.2.0",
+  "description": "MCP server exposing Grok search, deep search, and fact-check tools backed by an OpenAI-compatible grok2api gateway.",
   "type": "module",
   "private": true,
   "scripts": {
