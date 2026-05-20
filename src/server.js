@@ -3,7 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 
 // Fixed model routing — do NOT read GROK_MODEL from env to avoid stale model ids.
-const FAST_SEARCH_MODEL = "grok-4.3";
+const FAST_SEARCH_MODEL = "grok-4.20-fast";
 const DEEP_SEARCH_MODEL = "grok-4.20-multi-agent";
 const DEFAULT_TIMEOUT_MS = 120000;
 const DEEP_TIMEOUT_MS = 300000;
@@ -27,8 +27,15 @@ const config = {
 
 const server = new McpServer({
   name: "grok-search",
-  version: "1.2.0"
+  version: "1.4.0"
 });
+
+// Per-tool retry budgets. Fast tools retry up to 3 times; deep search up to 2
+// (each attempt is already long, so we don't want to multiply the wall time).
+const FAST_MAX_ATTEMPTS = 3;
+const DEEP_MAX_ATTEMPTS = 2;
+// Backoff between attempts in ms. Length of array implicitly caps total tries.
+const BACKOFF_MS = [2000, 5000, 10000];
 
 const searchSchema = {
   query: z.string().min(1).describe("Search query to answer with current web evidence."),
@@ -49,16 +56,17 @@ server.registerTool(
   "grok_search",
   {
     title: "Grok Search",
-    description: "Fast web search with Grok. Returns a concise answer with source links. Optimized for speed and stability — use this for most everyday lookups.",
+    description: "Web search with Grok. Returns an answer with source links. Use this for everyday lookups.",
     inputSchema: searchSchema
   },
-  async ({ query, max_results = 15 }) => {
-    const text = await askGrok({
+  async ({ query, max_results = 20 }) => {
+    const text = await askGrokWithRetry({
       task: "search",
       userText: query,
       maxResults: max_results,
       model: FAST_SEARCH_MODEL,
-      timeoutMs: config.timeoutMs
+      timeoutMs: config.timeoutMs,
+      maxAttempts: FAST_MAX_ATTEMPTS
     });
 
     return textContent(text);
@@ -78,12 +86,13 @@ server.registerTool(
     inputSchema: deepSearchSchema
   },
   async ({ query, max_results = 20 }) => {
-    const text = await askGrok({
+    const text = await askGrokWithRetry({
       task: "deep_search",
       userText: query,
       maxResults: max_results,
       model: DEEP_SEARCH_MODEL,
-      timeoutMs: config.deepTimeoutMs
+      timeoutMs: config.deepTimeoutMs,
+      maxAttempts: DEEP_MAX_ATTEMPTS
     });
 
     return textContent(text);
@@ -97,33 +106,156 @@ server.registerTool(
     description: "Fact-check a claim with Grok and return verdict, evidence, and source links.",
     inputSchema: factCheckSchema
   },
-  async ({ claim, max_results = 15 }) => {
-    const text = await askGrok({
+  async ({ claim, max_results = 20 }) => {
+    const text = await askGrokWithRetry({
       task: "fact_check",
       userText: claim,
       maxResults: max_results,
       model: FAST_SEARCH_MODEL,
-      timeoutMs: config.timeoutMs
+      timeoutMs: config.timeoutMs,
+      maxAttempts: FAST_MAX_ATTEMPTS
     });
 
     return textContent(text);
   }
 );
 
-async function askGrok({ task, userText, maxResults, model, timeoutMs }) {
-  const messages = [
-    {
-      role: "system",
-      content: buildSystemPrompt(task, maxResults)
-    },
-    {
-      role: "user",
-      content: userText
+async function askGrokWithRetry(params) {
+  const { task, maxAttempts } = params;
+  const label = `${task}/${params.model}`;
+  const attempts = clampAttempts(maxAttempts);
+
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const out = await askGrokOnce(params);
+      // Success path: append footer (with attempt count) and return.
+      return appendFooter(out.content, {
+        model: out.model ?? params.model,
+        task,
+        usage: out.usage,
+        attempts: attempt
+      });
+    } catch (error) {
+      lastError = error;
+      const summary = errorSummary(error);
+      const retryable = isRetryableError(error);
+      const willRetry = retryable && attempt < attempts;
+
+      // stderr breadcrumb so MCP clients with logs can see what happened.
+      // We never log the API key or auth header.
+      console.error(
+        `[grok-search] attempt ${attempt}/${attempts} failed (${label}): ${summary}` +
+        (willRetry ? ` — retrying in ${BACKOFF_MS[attempt - 1] ?? 0}ms` : "")
+      );
+
+      if (!willRetry) break;
+      const wait = BACKOFF_MS[attempt - 1] ?? BACKOFF_MS[BACKOFF_MS.length - 1];
+      await sleep(wait);
     }
+  }
+
+  // All attempts exhausted. Return a clear, MCP-text-style error message.
+  const summary = errorSummary(lastError);
+  throw new Error(`Grok ${task} failed after ${attempts} attempt(s): ${summary}`);
+}
+
+function clampAttempts(n) {
+  if (!Number.isFinite(n) || n < 1) return 1;
+  // We only have BACKOFF_MS.length backoff slots; one more attempt than slots
+  // is fine (last attempt has no follow-up wait).
+  return Math.min(n, BACKOFF_MS.length + 1);
+}
+
+async function askGrokOnce({ task, userText, maxResults, model, timeoutMs }) {
+  const messages = [
+    { role: "system", content: buildSystemPrompt(task, maxResults) },
+    { role: "user", content: userText }
   ];
 
+  // Each attempt re-issues a fresh /chat/completions request, giving grok2api
+  // a chance to pick a different upstream account on the next try.
   const result = await callGrok(messages, { model, timeoutMs });
-  return appendFooter(result.content, { model: result.model ?? model, task, usage: result.usage });
+
+  // Some failures come back as HTTP-200 JSON content with an "overloaded"
+  // string inside instead of a proper error. Detect that and force a retry.
+  if (isRetryableText(result.content)) {
+    throw makeRetryableError(`upstream returned retryable text: ${snippet(result.content)}`);
+  }
+
+  return result;
+}
+
+const RETRYABLE_TEXT_PATTERNS = [
+  /this model is overloaded/i,
+  /overloaded right now/i,
+  /try again shortly/i,
+  /service temporarily unavailable/i,
+  /grok2api stream did not include assistant content/i,
+  /524: a timeout occurred/i,
+  /\bcloudflare\b/i,
+  /\btimed? out\b/i
+];
+
+function isRetryableText(text) {
+  if (typeof text !== "string" || text.trim() === "") return false;
+  return RETRYABLE_TEXT_PATTERNS.some((re) => re.test(text));
+}
+
+function isRetryableError(error) {
+  if (!error) return false;
+
+  // Explicit marker we set ourselves.
+  if (error.retryable === true) return true;
+
+  const name = String(error.name ?? "");
+  const msg = String(error.message ?? "");
+
+  // fetch / abort
+  if (name === "AbortError") return true;
+  if (/aborted/i.test(msg)) return true;
+
+  // Node fetch / undici connection problems
+  if (/terminated/i.test(msg)) return true;
+  if (/socket hang up/i.test(msg)) return true;
+  if (/ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENETUNREACH/i.test(msg)) return true;
+  if (/connection (closed|reset|refused)/i.test(msg)) return true;
+  if (/fetch failed/i.test(msg)) return true;
+  if (/idle-timed-out/i.test(msg)) return true;
+  if (/no text content/i.test(msg)) return true;
+
+  // Upstream HTTP statuses that imply transient failures.
+  if (/\bGrok API request failed \((50[234]|408|429|499|520|521|522|523|524|525|526|527|530)\)/i.test(msg)) {
+    return true;
+  }
+
+  // Anything matching the same retryable text patterns we use on bodies.
+  if (isRetryableText(msg)) return true;
+
+  return false;
+}
+
+function makeRetryableError(message) {
+  const e = new Error(message);
+  e.retryable = true;
+  return e;
+}
+
+function errorSummary(error) {
+  if (!error) return "unknown error";
+  const name = error.name && error.name !== "Error" ? `${error.name}: ` : "";
+  const msg = String(error.message ?? error);
+  // Trim very long upstream payloads but keep enough context to debug.
+  return `${name}${msg.length > 500 ? msg.slice(0, 500) + "…" : msg}`;
+}
+
+function snippet(text) {
+  const s = String(text ?? "").replace(/\s+/g, " ").trim();
+  return s.length > 200 ? s.slice(0, 200) + "…" : s;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function callGrok(messages, options = {}) {
@@ -376,13 +508,16 @@ function buildSystemPrompt(task, maxResults) {
   ].join("\n");
 }
 
-function appendFooter(answer, { model, task, usage }) {
+function appendFooter(answer, { model, task, usage, attempts }) {
   const lines = [`model: ${model}`, `tool: ${task}`];
   if (usage && (usage.prompt_tokens || usage.completion_tokens || usage.total_tokens)) {
     const pt = usage.prompt_tokens ?? "?";
     const ct = usage.completion_tokens ?? "?";
     const tt = usage.total_tokens ?? "?";
     lines.push(`usage: prompt=${pt} completion=${ct} total=${tt}`);
+  }
+  if (typeof attempts === "number" && attempts > 0) {
+    lines.push(`attempts: ${attempts}`);
   }
   return `${answer}\n\n---\n${lines.join("\n")}`;
 }

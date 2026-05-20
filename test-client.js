@@ -9,7 +9,7 @@ if (!process.env.GROK_API_KEY) {
   process.exit(1);
 }
 
-const FAST_SEARCH_MODEL = "grok-4.3";
+const FAST_SEARCH_MODEL = "grok-4.20-fast";
 const DEEP_SEARCH_MODEL = "grok-4.20-multi-agent";
 
 const childEnv = { ...process.env };
@@ -38,7 +38,7 @@ const transport = new StdioClientTransport({
 
 const client = new Client({
   name: "grok-search-test-client",
-  version: "1.2.0"
+  version: "1.3.0"
 });
 
 function extractText(result) {
@@ -72,12 +72,12 @@ try {
     }
   }
 
-  // 1. grok_search → grok-4.3
+  // 1. grok_search → grok-4.20-fast
   const searchResult = await client.callTool({
     name: "grok_search",
     arguments: {
       query: "What is the latest stable Node.js major version?",
-      max_results: 25
+      max_results: 20
     }
   }, undefined, { timeout: 130000 });
 
@@ -116,7 +116,7 @@ try {
   console.log("grok_deep_search result preview:");
   console.log(deepText.slice(0, 1000));
 
-  // 3. grok_fact_check → grok-4.3
+  // 3. grok_fact_check → grok-4.20-fast
   const factCheckResult = await client.callTool({
     name: "grok_fact_check",
     arguments: {

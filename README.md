@@ -61,14 +61,13 @@ cp .env.example .env
 
 > **Models are pinned in the server and not configurable via env.** A previous
 > `GROK_MODEL` variable existed and is now intentionally ignored — set it and
-> nothing happens. This keeps clients from accidentally pinning a stale model
-> id like `grok-4.20-fast`.
+> nothing happens. This keeps clients from accidentally pinning a stale model id.
 >
 > Tool → model routing:
 >
-> - `grok_search` → `grok-4.3`
+> - `grok_search` → `grok-4.20-fast`
 > - `grok_deep_search` → `grok-4.20-multi-agent`
-> - `grok_fact_check` → `grok-4.3`
+> - `grok_fact_check` → `grok-4.20-fast`
 
 ## Run as an MCP server
 
@@ -96,14 +95,14 @@ Example for Claude Code (`~/.claude.json` or project `.mcp.json`); see also
 
 ## Tools
 
-### `grok_search` — fast everyday search
-Fast web search with Grok (`grok-4.3`). Returns a concise answer with source
-links. Use this for most everyday lookups.
+### `grok_search` — everyday search
+Web search with Grok (`grok-4.20-fast`). Returns an answer with source links.
+Use this for everyday lookups.
 
 | Field | Type | Description |
 | :-- | :-- | :-- |
 | `query` | string | Search query |
-| `max_results` | int (1-25, optional) | Preferred number of source links |
+| `max_results` | int (1-25, optional, default 20) | Preferred number of source links |
 
 ### `grok_deep_search` — broad multi-source research
 Deep, multi-agent web research with Grok (`grok-4.20-multi-agent`). Use this
@@ -117,15 +116,15 @@ Prefer this when a single quick search wouldn't give a defensible answer.
 | `max_results` | int (1-25, optional) | Preferred number of source links |
 
 ### `grok_fact_check` — verdict + evidence
-Fact-check a claim with Grok (`grok-4.3`) and return verdict, evidence,
+Fact-check a claim with Grok (`grok-4.20-fast`) and return verdict, evidence,
 caveats, and sources.
 
 | Field | Type | Description |
 | :-- | :-- | :-- |
 | `claim` | string | Claim to verify |
-| `max_results` | int (1-25, optional) | Preferred number of source links |
+| `max_results` | int (1-25, optional, default 20) | Preferred number of source links |
 
-Every tool's response ends with a footer line like `model: grok-4.3` so you
+Every tool's response ends with a footer line like `model: grok-4.20-fast` so you
 can see which model actually answered.
 
 ## Test

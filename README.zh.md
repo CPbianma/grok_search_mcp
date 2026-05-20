@@ -60,13 +60,13 @@ cp .env.example .env
 
 > **模型在服务端固定写死，不再通过环境变量配置。** 老版本的 `GROK_MODEL`
 > 变量现在会被显式忽略 —— 设了也没用。这样可以避免客户端不小心把模型钉
-> 死在已经过时的 `grok-4.20-fast` 上。
+> 死在已经过时的 model id 上。
 >
 > 工具到模型的路由：
 >
-> - `grok_search` → `grok-4.3`
+> - `grok_search` → `grok-4.20-fast`
 > - `grok_deep_search` → `grok-4.20-multi-agent`
-> - `grok_fact_check` → `grok-4.3`
+> - `grok_fact_check` → `grok-4.20-fast`
 
 ## 作为 MCP 服务器使用
 
@@ -94,13 +94,13 @@ Claude Code 为例（`~/.claude.json` 或项目级 `.mcp.json`），也可参考
 
 ## 工具说明
 
-### `grok_search` —— 快速日常搜索
-基于 `grok-4.3` 的快速联网搜索，返回简明回答和来源链接。日常查找走这个。
+### `grok_search` —— 日常搜索
+基于 `grok-4.20-fast` 的联网搜索，返回回答和来源链接。日常查找走这个。
 
 | 字段 | 类型 | 说明 |
 | :-- | :-- | :-- |
 | `query` | string | 搜索查询 |
-| `max_results` | int (1-25, 可选) | 期望返回的来源数量 |
+| `max_results` | int (1-25, 可选，默认 20) | 期望返回的来源数量 |
 
 ### `grok_deep_search` —— 广度多源研究
 基于 `grok-4.20-multi-agent` 的深度多智能体研究。用于复杂调研、广泛检索、
@@ -113,14 +113,14 @@ Claude Code 为例（`~/.claude.json` 或项目级 `.mcp.json`），也可参考
 | `max_results` | int (1-25, 可选) | 期望返回的来源数量 |
 
 ### `grok_fact_check` —— 结论 + 证据
-基于 `grok-4.3` 对一个声明做事实核查，返回结论、证据、注意事项和来源。
+基于 `grok-4.20-fast` 对一个声明做事实核查，返回结论、证据、注意事项和来源。
 
 | 字段 | 类型 | 说明 |
 | :-- | :-- | :-- |
 | `claim` | string | 待核查的声明 |
-| `max_results` | int (1-25, 可选) | 期望返回的来源数量 |
+| `max_results` | int (1-25, 可选，默认 20) | 期望返回的来源数量 |
 
-每个工具的输出尾部都会附带一行类似 `model: grok-4.3` 的脚注，方便你确认
+每个工具的输出尾部都会附带一行类似 `model: grok-4.20-fast` 的脚注，方便你确认
 实际由哪个模型回答。
 
 ## 测试
