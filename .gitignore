@@ -6,6 +6,9 @@ node_modules/
 .env.local
 .env.*.local
 
+# Local release notes drafts (passed to `gh release create -F`, not part of the repo)
+.release-notes-*.md
+
 # Logs
 *.log
 npm-debug.log*
